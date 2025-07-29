@@ -1,0 +1,156 @@
+#!/bin/bash
+#=======================================================================
+# animeupdater v1.0 - 可安装、可配置的 Docker Compose 项目管理工具
+# - 新增: yq 安装失败时，自动回退到官方二进制下载方法
+#=======================================================================
+
+# --- 静态配置 ---
+CONFIG_DIR="$HOME/.config/animeupdater"
+CONFIG_FILE="$CONFIG_DIR/config"
+
+
+# --- 依赖安装功能 ---
+install_dependencies() {
+    echo "🔎 正在检查系统环境和依赖..."
+
+    # 1. 硬性检查：Docker
+    if ! command -v docker &> /dev/null; then
+        echo "❌ 错误：Docker 未安装！请先手动安装。"; exit 1;
+    else
+        echo "   ✅ Docker Engine 已找到。"
+    fi
+    if ! docker info &> /dev/null; then
+        echo "   ⚠️ 警告：Docker 守护进程 (daemon) 似乎未在运行。请确保其已启动。"
+    fi
+
+    # 2. 检查并安装 yq (双重策略)
+    if ! command -v yq &> /dev/null; then
+        echo "   -> 'yq' 未找到，开始尝试安装..."
+        # --- 策略一: 尝试使用系统包管理器 ---
+        echo "      [策略1/2] 正在尝试使用系统包管理器..."
+        local installed_by_pm=false
+        if command -v brew &> /dev/null; then
+            brew install yq && installed_by_pm=true
+        elif command -v apt-get &> /dev/null; then
+            apt-get update && apt-get install -y yq && installed_by_pm=true
+        elif command -v dnf &> /dev/null; then
+            dnf install -y yq && installed_by_pm=true
+        elif command -v yum &> /dev/null; then
+            yum install -y yq && installed_by_pm=true
+        elif command -v pacman &> /dev/null; then
+            pacman -S --noconfirm yq && installed_by_pm=true
+        else
+            echo "      -> 未找到主流包管理器，将跳过此策略。"
+        fi
+
+        # --- 策略二: 如果策略一失败，尝试二进制下载 ---
+        if [ "$installed_by_pm" = false ] && ! command -v yq &> /dev/null; then
+            echo "      [策略2/2] 包管理器安装失败或跳过，尝试官方二进制下载..."
+
+            if ! command -v wget &> /dev/null && ! command -v curl &> /dev/null; then
+                echo "      ❌ 错误: 'wget' 或 'curl' 命令未找到，无法执行备用下载方案。"
+                exit 1
+            fi
+
+            # 自动检测系统和架构
+            local os=$(uname -s | tr '[:upper:]' '[:lower:]')
+            local arch=$(uname -m)
+            case "$arch" in
+                x86_64) arch="amd64" ;;
+                aarch64 | arm64) arch="arm64" ;;
+                *) echo "      ❌ 错误: 不支持的处理器架构 '$arch'。请手动安装 yq。"; exit 1 ;;
+            esac
+            
+            local yq_url="https://github.com/mikefarah/yq/releases/latest/download/yq_${os}_${arch}"
+            local yq_dest="/usr/local/bin/yq"
+            echo "         -> 正在从 $yq_url 下载..."
+
+            if command -v wget &> /dev/null; then
+                wget -q "$yq_url" -O "$yq_dest"
+            else
+                curl -sL "$yq_url" -o "$yq_dest"
+            fi
+
+            if [ $? -eq 0 ]; then
+                chmod +x "$yq_dest"
+            else
+                echo "      ❌ 'yq' 二进制文件下载失败。请检查网络或手动安装。"
+                # 清理可能下载不完整的文件
+                rm -f "$yq_dest"
+            fi
+        fi
+    fi
+
+    # 最终验证 yq
+    if ! command -v yq &> /dev/null; then
+        echo "❌ 错误：所有安装 'yq' 的尝试均已失败。请手动安装后重试。"
+        exit 1
+    else
+        echo "   ✅ 'yq' 已成功安装或确认存在。"
+    fi
+    
+    # 3. 检查 Docker Compose (逻辑不变)
+    if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
+        echo "   -> 'Docker Compose' 未找到，正在尝试安装..."
+        if command -v apt-get &> /dev/null; then apt-get update && apt-get install -y docker-compose-plugin; fi
+    fi
+    echo "   ✅ 'Docker Compose' 已安装或确认存在。"
+}
+
+
+# --- 安装功能 ---
+install_script() {
+    echo "🚀 开始安装 animeupdater v1.0..."
+    if [ "$(id -u)" -ne 0 ]; then echo "❌ 错误: 安装需要管理员权限。请使用 'sudo ./animeupdater install' 运行。"; exit 1; fi
+    install_dependencies
+    # ...后续安装逻辑与 v4.0 完全相同...
+    local project_dir
+    while true; do
+        read -p "请输入您的 Docker Compose 项目的绝对路径: " project_dir
+        local compose_path="$project_dir/docker-compose.yml"; local config_path="$project_dir/config/config.yaml"
+        if [ ! -d "$project_dir" ]; then echo "❌ 错误: 目录 '$project_dir' 不存在。";
+        elif [ ! -f "$compose_path" ]; then echo "❌ 错误: 在该目录下未找到 'docker-compose.yml' 文件。";
+        elif [ ! -f "$config_path" ]; then echo "❌ 错误: 在该目录下未找到 'config/config.yaml' 文件。";
+        else echo "✅ 路径和配置文件均有效: $project_dir"; break; fi
+        read -p "安装已中止。是否要尝试其他路径? [y/N]: " retry
+        if [[ ! "$retry" =~ ^[yY](es)?$ ]]; then echo "🚫 安装已取消。"; exit 1; fi
+    done
+    echo "📝 正在创建脚本配置文件..."; mkdir -p "$CONFIG_DIR"; echo "COMPOSE_PROJECT_DIR=\"$project_dir\"" > "$CONFIG_FILE"
+    echo "🌍 正在将脚本安装到 /usr/local/bin/ ..."; cp "$0" "/usr/local/bin/animeupdater"; chmod +x "/usr/local/bin/animeupdater"
+    echo "🎉 安装成功！现在您可以在任何地方直接运行 'animeupdater' 命令了。"
+    exit 0
+}
+
+
+# --- 卸载功能 (无变化) ---
+uninstall_script() {
+    echo "🗑️ 开始卸载 animeupdater..."; if [ "$(id -u)" -ne 0 ]; then echo "❌ 错误: 卸载需要管理员权限。"; exit 1; fi
+    read -p "这将删除 /usr/local/bin/animeupdater 和脚本配置文件。您确定吗? [y/N]: " confirm
+    if [[ ! "$confirm" =~ ^[yY](es)?$ ]]; then echo "🚫 操作已取消。"; exit 0; fi
+    rm -f "/usr/local/bin/animeupdater"; rm -rf "$CONFIG_DIR"
+    echo "✅ animeupdater 已成功卸载。"; exit 0
+}
+
+
+# --- 交互式模式主程序 (无变化) ---
+run_interactive_mode() {
+    # ... (此函数无需修改) ...
+    if [ ! -f "$CONFIG_FILE" ]; then echo "❌ 错误: animeupdater 尚未配置。"; exit 1; fi; source "$CONFIG_FILE"
+    local yaml_file_to_modify="$COMPOSE_PROJECT_DIR/config/config.yaml"
+    show_menu() { echo -e "========================================\n         animeupdater v1.0\n========================================\n 项目路径: $COMPOSE_PROJECT_DIR\n----------------------------------------\n  1. 手动关闭 Docker Compose 服务\n  2. 手动开启 Docker Compose 服务\n  3. 更新所有 CRON 并重启服务\n  4. 查看服务日志 (实时)\n  5. 进入项目目录 (开启新Shell)\n  0. 退出脚本\n----------------------------------------"; }
+    stop_docker() { echo "🛑 正在停止..."; (cd "$COMPOSE_PROJECT_DIR" && docker-compose down); echo "✅ 已停止。"; }
+    start_docker() { echo "🚀 正在启动..."; (cd "$COMPOSE_PROJECT_DIR" && docker-compose up -d); echo "✅ 已启动。"; }
+    view_logs() { echo "📜 查看日志 (按 Ctrl+C 退出)..."; (cd "$COMPOSE_PROJECT_DIR" && docker-compose logs -f); }
+    go_to_compose_dir() { echo "⤵️ 进入项目目录 (输入 'exit' 返回)..."; (cd "$COMPOSE_PROJECT_DIR" && bash); }
+    update_and_restart() { echo "🔄 开始执行“更新并重启”流程..."; if [ ! -f "$yaml_file_to_modify" ]; then echo "❌ 错误: 找不到用户配置文件: $yaml_file_to_modify"; return 1; fi; stop_docker; echo "⏰ 正在计算新的 CRON 时间 (当前时间 + 2 分钟)..."; local new_minute=$(date -d "+2 minutes" +%M); local new_hour=$(date -d "+2 minutes" +%H); local new_cron_string="$new_minute $new_hour * * *"; echo "   新的 CRON 计划将统一设置为: '$new_cron_string'"; echo "📝 正在更新 YAML 文件中的所有 CRON..."; yq e -i "(.Alist2StrmList[].cron) |= \"$new_cron_string\"" "$yaml_file_to_modify"; echo "   YAML 文件更新成功！"; start_docker; echo "🎉 流程执行完毕！"; }
+    while true; do show_menu; read -p "请输入选项 [0-5]: " choice; case $choice in 1) stop_docker ;; 2) start_docker ;; 3) update_and_restart ;; 4) view_logs ;; 5) go_to_compose_dir ;; 0) echo "👋 感谢使用，再见！"; exit 0 ;; *) echo "❌ 无效输入。" ;; esac; echo; read -n 1 -s -r -p "按任意键返回主菜单..."; echo; echo; done
+}
+
+
+# --- 脚本主入口 (无变化) ---
+case "$1" in
+    install) install_script ;;
+    uninstall) uninstall_script ;;
+    "" | -h | --help) if [ -t 1 ] && [ "$1" == "" ]; then run_interactive_mode; else echo -e "用法: \n  sudo ./animeupdater install      # 安装、检查依赖并配置脚本\n  sudo animeupdater uninstall    # 卸载脚本\n  animeupdater                 # 进入交互式管理菜单"; fi ;;
+    *) echo "❌ 未知指令: '$1'"; echo "   可用指令: install, uninstall"; exit 1 ;;
+esac
