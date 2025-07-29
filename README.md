@@ -4,6 +4,8 @@
 
 一个为 [autofilm](https://github.com/Akimio521/AutoFilm) 项目设计的智能、自动化的管理工具，特别适用于需要触发 cron 更新计划的场景。
 
+**由 Gemini 2.5 Pro 生成**
+
 -----
 
 ## 📖 简介
@@ -39,13 +41,13 @@
 ### 使用 cURL (推荐)
 
 ```bash
-bash -c "$(curl -LfsS https://raw.githubusercontent.com/PureAmaya/animeupdater/main/animeupdater)" -- install
+bash -c "$(curl -LfsS https://raw.githubusercontent.com/PureAmaya/animeupdater/refs/heads/main/animeupdater)" -- install
 ```
 
 ### 使用 Wget
 
 ```bash
-bash -c "$(wget -O- https://raw.githubusercontent.com/PureAmaya/animeupdater/main/animeupdater)" -- install
+bash -c "$(wget -O- https://raw.githubusercontent.com/PureAmaya/animeupdater/refs/heads/main/animeupdater)" -- install
 ```
 
 安装过程中，脚本会：
